@@ -1,0 +1,9 @@
+<library path="dynamixel_ros2_control">
+  <class name="dynamixel_ros2_control/DynamixelHardwareInterface"
+         type="dynamixel_ros2_control::DynamixelHardwareInterface"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      The ROBOTIS Dynamixel system interface.
+    </description>
+  </class>
+</library>

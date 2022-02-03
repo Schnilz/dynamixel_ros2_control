@@ -1,0 +1,64 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    #velocity_controller:
+    #  type: velocity_controllers/JointGroupVelocityController
+
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+#velocity_controller:
+#  ros__parameters:
+#    joints:
+#      - joint_motor1_arm1
+#      - joint_motor2_arm1
+#      - joint_motor3_arm1
+#      - joint_motor1_arm2
+#      - joint_motor2_arm2
+#      - joint_motor3_arm2
+#      - joint_motor1_arm3
+#      - joint_motor2_arm3
+#      - joint_motor3_arm3
+#      - joint_motor1_arm4
+#      - joint_motor2_arm4
+#      - joint_motor3_arm4
+#      - joint_motor1_arm5
+#      - joint_motor2_arm5
+#      - joint_motor3_arm5
+#      - joint_motor1_arm6
+#      - joint_motor2_arm6
+#      - joint_motor3_arm6
+
+joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - joint_motor1_arm1
+      - joint_motor2_arm1
+      - joint_motor3_arm1
+      - joint_motor1_arm2
+      - joint_motor2_arm2
+      - joint_motor3_arm2
+      - joint_motor1_arm3
+      - joint_motor2_arm3
+      - joint_motor3_arm3
+      - joint_motor1_arm4
+      - joint_motor2_arm4
+      - joint_motor3_arm4
+      - joint_motor1_arm5
+      - joint_motor2_arm5
+      - joint_motor3_arm5
+      - joint_motor1_arm6
+      - joint_motor2_arm6
+      - joint_motor3_arm6
+
+    command_interfaces:
+      - position
+
+    state_interfaces:
+      - position
+    
+    allow_partial_joints_goal: true
