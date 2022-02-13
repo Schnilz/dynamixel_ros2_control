@@ -26,6 +26,9 @@ Add the `serial_port`, `baud_rate`, and `id` parameters to the ros2_control part
       </hardware>
       <joint name="joint1">
         <param name="id">10</param>
+        <param name="p_gain">1120.0</param>
+        <param name="i_gain">170.0</param>
+        <param name="d_gain">3600.0</param>   
         <!--param name="reboot_on_error">true</param-->
         <command_interface name="position"/>
         <!--command_interface name="velocity"/-->
@@ -35,7 +38,9 @@ Add the `serial_port`, `baud_rate`, and `id` parameters to the ros2_control part
       </joint>
       ...
 ```
+### Optional parameters
 When `reboot_on_error` is "true" the motor automaticaly reboots on mechanical overload error (it still loses torque for a brief moment, but that should be enogh to let the motor recover the fault).
+`p_gain`, `i_gain` and `d_gain` set the PID gain values of the motor.
 
 ## Run a test
 You need the urdf of the robot with the ros2_control xml added.

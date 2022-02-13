@@ -22,6 +22,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <limits>
 
 #include "dynamixel_ros2_control/dynamixel_driver.hpp"
 
@@ -38,6 +39,9 @@
 #define DYN_PORTNAME_PARAM_STR "serial_port"
 #define DYN_ENABLE_TORQUE_ON_START_PARAM_STR "enable_torque_on_startup"
 #define DYN_AUTO_REBOOT_PARAM_STR "reboot_on_error"
+#define DYN_P_GAIN_PARAM_STR "p_gain"
+#define DYN_I_GAIN_PARAM_STR "i_gain"
+#define DYN_D_GAIN_PARAM_STR "d_gain"
 #define DYN_ID_PARAM_STR "id"
 
 #define DYN_DEFAULT_PORT_STR "/dev/ttyUSB0"
@@ -111,9 +115,43 @@ CallbackReturn DynamixelHardwareInterface::on_init(
               (std::string("Motors count: ") +
                std::to_string(dynamixel_driver_->get_motor_count()))
                   .c_str());
+
+  dynamixel_driver_->read();
+
+  for (const auto &joint : info_.joints) {
+    auto p_it = joint.parameters.find(DYN_P_GAIN_PARAM_STR);
+    double p = (p_it != joint.parameters.end()) ? std::stod(p_it->second)
+                                                : std::numeric_limits<double>::quiet_NaN();
+    auto i_it = joint.parameters.find(DYN_I_GAIN_PARAM_STR);
+    double i = (i_it != joint.parameters.end()) ? std::stod(i_it->second)
+                                                : std::numeric_limits<double>::quiet_NaN();
+    auto d_it = joint.parameters.find(DYN_D_GAIN_PARAM_STR);
+    double d = (d_it != joint.parameters.end()) ? std::stod(d_it->second)
+                                                : std::numeric_limits<double>::quiet_NaN();
+    try {
+      dynamixel_driver_->pid_gains(joint.name, p, i, d);
+      if (!std::isnan(p) || !std::isnan(i) || !std::isnan(d)) {
+        RCLCPP_INFO(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
+                    ("Joint-Actuator \"" + std::string(joint.name) +
+                     "\" p:%f\t i:%f\t d:%f")
+                        .c_str(),
+                    float(p), float(i), float(d));
+      }
+    } catch (const std::exception &e) {
+      if (p_it != joint.parameters.end() || i_it != joint.parameters.end() ||
+          d_it != joint.parameters.end()) {
+        RCLCPP_WARN(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
+                    ("Joint-Actuator \"" + std::string(joint.name) +
+                     "\" Cant set PID gains: " + e.what())
+                        .c_str());
+      }
+    }
+  }
   if (failure) {
     return CallbackReturn::ERROR;
   }
+  RCLCPP_DEBUG(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
+               "init success");
   return CallbackReturn::SUCCESS;
 }
 
@@ -158,7 +196,7 @@ void DynamixelHardwareInterface::overload_error_callback(
 
 std::vector<hardware_interface::StateInterface>
 DynamixelHardwareInterface::export_state_interfaces() {
-  RCLCPP_DEBUG(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
+  RCLCPP_INFO(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
                "export_state_interfaces");
   std::vector<hardware_interface::StateInterface> state_interfaces;
   dynamixel_driver_->for_each_joint([&](const std::string &joint_name) {
@@ -177,7 +215,7 @@ DynamixelHardwareInterface::export_state_interfaces() {
 
 std::vector<hardware_interface::CommandInterface>
 DynamixelHardwareInterface::export_command_interfaces() {
-  RCLCPP_DEBUG(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
+  RCLCPP_INFO(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
                "export_command_interfaces");
   std::vector<hardware_interface::CommandInterface> command_interfaces;
   dynamixel_driver_->for_each_joint([&](const std::string &joint_name) {
@@ -193,7 +231,7 @@ CallbackReturn DynamixelHardwareInterface::on_activate(
   RCLCPP_DEBUG(rclcpp::get_logger(DYN_LOGGER_NAME_STR), "on_activate");
   try {
     dynamixel_driver_->ping_all();
-    RCLCPP_DEBUG(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
+    RCLCPP_INFO(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
                  "Pinging dynamixels was successfull");
   } catch (const dynamixel::Driver::dynamixel_bus_error &e) {
     RCLCPP_ERROR(rclcpp::get_logger(DYN_LOGGER_NAME_STR), e.what());
@@ -211,6 +249,8 @@ CallbackReturn DynamixelHardwareInterface::on_activate(
     RCLCPP_ERROR(rclcpp::get_logger(DYN_LOGGER_NAME_STR), e.what());
     return CallbackReturn::ERROR;
   }
+  RCLCPP_DEBUG(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
+               "activate success");
   return CallbackReturn::SUCCESS;
 }
 
@@ -221,7 +261,8 @@ CallbackReturn DynamixelHardwareInterface::on_deactivate(
     dynamixel_driver_->read();
     dynamixel_driver_->set_torque_all(false);
     dynamixel_driver_->write();
-    RCLCPP_INFO(rclcpp::get_logger(DYN_LOGGER_NAME_STR), "Motors deaktivated. Torque disabled !");
+    RCLCPP_INFO(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
+                "Motors deaktivated. Torque disabled !");
   } catch (std::invalid_argument &e) {
     RCLCPP_WARN(rclcpp::get_logger(DYN_LOGGER_NAME_STR), e.what());
     return CallbackReturn::ERROR;

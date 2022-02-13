@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <vector>
+#include <limits>
 
 #include "dynamixel_sdk/dynamixel_sdk.h"
 #include "iostream"
@@ -20,9 +21,11 @@ class Driver {
    public:
 	typedef std::function<void(const std::string& joint_name)> hw_error_callback;
    private:
+   	class Motor;
 	struct GroupSyncReader {
 		GroupSyncRead syncRead;
 		std::vector<std::function<void(GroupSyncRead&)>> read_functions;
+		std::vector<Motor*> motors;
 		GroupSyncReader(
 			std::unique_ptr<PortHandler>& port,
 			std::unique_ptr<PacketHandler>& ph,
@@ -42,6 +45,7 @@ class Driver {
 
 		bool led;
 		bool rebooting;
+		bool rebooted;
 		
 		double goal_position;
 
@@ -49,12 +53,15 @@ class Driver {
 
 		//double goal_velocity;
 		double velocity;
-
 		double effort;
-
 		bool torque;
 
 		uint8_t hw_error;
+
+		double p_gain, i_gain, d_gain;
+		double p_gain_target, i_gain_target, d_gain_target;
+
+		std::vector<std::function<void()>> after_reboot_functions;
 
 		typedef std::function<void(dynamixel::hardware_status)> hw_error_callback;
 		//hw_error_callback error_callback;
@@ -87,7 +94,17 @@ class Driver {
 		void set_velocity_from_raw(uint32_t raw) { velocity = velocity_from_raw(raw); }
 		void set_effort_from_raw(uint32_t raw) { effort = double(static_cast<int16_t>(raw))*0.1; }
 
-		Motor(const motor_id p_id, std::string p_name, const model_t type) : id(p_id), name(p_name), rebooting(false), goal_position(std::nan("")), position(std::nan("")) {
+		Motor(const motor_id p_id, std::string p_name, const model_t type) : 
+				id(p_id), 
+				name(p_name), 
+				rebooting(true), 
+				rebooted(false), 
+				goal_position(std::numeric_limits<double>::quiet_NaN()), 
+				position(std::numeric_limits<double>::quiet_NaN()), 
+				p_gain(std::numeric_limits<double>::quiet_NaN()), 
+				i_gain(std::numeric_limits<double>::quiet_NaN()), 
+				d_gain(std::numeric_limits<double>::quiet_NaN()) 
+		{
 			try {
 				model = &model_infos.at(type);
 			} catch (const std::exception &e) {
@@ -111,7 +128,7 @@ class Driver {
 				[this](uint32_t data) {
 					this->torque = bool(data);
 					if (this->torque == false) {
-						goal_position = std::nan("");
+						goal_position = std::numeric_limits<double>::quiet_NaN();
 					}
 				});
 
@@ -176,10 +193,38 @@ class Driver {
 							//https://emanual.robotis.com/docs/en/dxl/x/xl430-w250/#hardware-error-status
 						} else {
 							this->rebooting = false;
+							this->rebooted = true;
 						}
 					});
 			}
+		}
 
+		void setup_init_sync_readers(
+			std::map<field, std::unique_ptr<GroupSyncReader>>& initSyncReaders,
+			std::unique_ptr<PortHandler>& portHandler,
+			std::unique_ptr<PacketHandler>& packetHandler) 
+		{
+			//Load PID gains if available
+			try {
+				setup_sync_reader(
+					initSyncReaders, portHandler, packetHandler,
+					command::Position_P_Gain,
+					[this](uint32_t raw) {
+						this->p_gain = double(static_cast<int16_t>(raw));
+					});
+				setup_sync_reader(
+					initSyncReaders, portHandler, packetHandler,
+					command::Position_I_Gain,
+					[this](uint32_t raw) {
+						this->i_gain = double(static_cast<int16_t>(raw));
+					});
+				setup_sync_reader(
+					initSyncReaders, portHandler, packetHandler,
+					command::Position_D_Gain,
+					[this](uint32_t raw) {
+						this->d_gain = double(static_cast<int16_t>(raw));
+					});
+			} catch (command_type_not_implemented& e) {}
 		}
 
 		void setup_sync_reader(
@@ -199,6 +244,7 @@ class Driver {
 					 std::make_unique<GroupSyncReader>(portHandler, packetHandler, sr_field)});
 			}
 			sync_reader_it->second->syncRead.addParam(this->id);
+			sync_reader_it->second->motors.push_back(this);
 			sync_reader_it->second->read_functions.push_back(
 				[this, sr_field, callback](GroupSyncRead& read) {
 					if (read.isAvailable(this->id, sr_field.address, sr_field.data_length)) {
@@ -216,6 +262,7 @@ class Driver {
 	std::unique_ptr<PortHandler> portHandler;
 	std::unique_ptr<PacketHandler> packetHandler;
 
+	std::map<field, std::unique_ptr<GroupSyncReader>> initSyncReaders;
 	std::map<field, std::unique_ptr<GroupSyncReader>> syncReaders;
 	std::map<field, std::unique_ptr<GroupSyncWrite>> syncWrites;
 
@@ -285,7 +332,11 @@ class Driver {
 		add_syncwrite_data(motor->id, command_field, reinterpret_cast<uint8_t*>(&p));
 	}
 
-    void reboot(const dynamixel::Driver::Motor::Ptr& motor) {
+    void reboot(dynamixel::Driver::Motor::Ptr& motor) {
+		motor->after_reboot_functions.clear();
+		motor->after_reboot_functions.push_back([this, motor](){
+			this->pid_gains(motor->name, motor->p_gain_target, motor->i_gain_target, motor->d_gain_target);
+		});
 		packetHandler->reboot(portHandler.get(),motor->id);
 	}
 
@@ -367,6 +418,8 @@ class Driver {
 		auto motor = std::make_shared<Motor>(id, joint_name, type);
 		motors[joint_name] = motor;
 		std::weak_ptr<Motor> weak_motor(motors[joint_name]);
+
+		motor->setup_init_sync_readers(initSyncReaders, portHandler, packetHandler);
 		motor->setup_sync_readers(syncReaders, portHandler, packetHandler, 
 			[this, weak_motor](dynamixel::hardware_status s)
 			{
@@ -415,12 +468,40 @@ class Driver {
 	}
 
 	void read() {
+		bool init_done = true;
+		for (auto it = initSyncReaders.begin(); it != initSyncReaders.end(); std::advance(it,1)) {
+			const auto& [field, syncReader] = *it;
+			(void)field;
+			/*auto result = */ syncReader->syncRead.txRxPacket();
+			//std::cout<<packetHandler->getTxRxResult(result)<<std::endl;
+			for (auto read_f : syncReader->read_functions) {
+				read_f(syncReader->syncRead);
+			}
+			// If no motor is rebooting then the initial read was succesfull.
+			if (!std::all_of(syncReader->motors.cbegin(), syncReader->motors.cend(), 
+					[](const auto& m){ return !m->rebooting; })) {
+				init_done = false;
+			}
+		}
+
 		for (const auto& [field, syncReader] : syncReaders) {
 			(void)field;
 			/*auto result = */ syncReader->syncRead.txRxPacket();
 			//std::cout<<packetHandler->getTxRxResult(result)<<std::endl;
 			for (auto read_f : syncReader->read_functions) {
 				read_f(syncReader->syncRead);
+			}
+		}
+
+		if(init_done) {
+			initSyncReaders.clear();
+			for (const auto& [joint_name, motor]: motors) {
+				if(motor->rebooted) {
+					motor->rebooted = false;
+					for(auto after_reboot_f:motor->after_reboot_functions) {
+						after_reboot_f();
+					}
+				}
 			}
 		}
 	}
@@ -579,7 +660,6 @@ class Driver {
 	 * @param joint_name the name of the joint
 	 * @param position the position in radians the actuator should move to
 	 * @param enable_torque enable the torque if not enabled already
-	 * @return true if successfull, false otherwise (e.g. joint_name is not available)
 	 */
 	void set_position(const std::string& joint_name, double position, bool enable_torque = false) {
 		if (std::isnan(position))
@@ -601,6 +681,54 @@ class Driver {
 		uint32_t p = motor->raw_from_position(position);
 		motor->goal_position = position;
 		add_syncwrite_data(motor->id, command_field, reinterpret_cast<uint8_t*>(&p));
+	}
+
+	/**
+	 * Sets the pid gains for a motor. This is only possible after the first read 
+	 * as the initial values need to be read from the motor.
+	 * @param joint_name the name of the joint
+	 */
+
+	void pid_gains(const std::string& joint_name, double& p, double& i, double& d) {
+		auto it_motor = motors.find(joint_name);
+		if (it_motor == motors.end())
+			throw std::invalid_argument("Joint \"" + joint_name + "\" not added to driver!");
+		auto motor = it_motor->second;
+		//std::cout <<joint_name<<" target p:"<< p<<"\ti:"<< i<<"\td:" << d << std::endl;
+		//std::cout <<joint_name<<" current p:"<< motor->p_gain<<"\ti:"<< motor->i_gain<<"\td:" << motor->d_gain << std::endl;
+		if(std::isnan( motor->p_gain) || std::isnan( motor->i_gain) || std::isnan( motor->d_gain)) {
+			throw std::invalid_argument("Cant set pid gains for \"" + joint_name + "\" because motor doesn't have pid control!");
+		}
+		if(std::isnan(p)) {
+			p = motor->p_gain;
+		}
+		if(std::isnan(i)) {
+			i = motor->i_gain;
+		}
+		if(std::isnan(d)) {
+			d = motor->d_gain;
+		}
+		if( p != motor->p_gain) {
+			field command_field;
+			motor->get_command(command::Position_P_Gain, command_field);
+			uint32_t data = static_cast<uint32_t>(p);
+			motor->p_gain_target = p;
+			add_syncwrite_data(motor->id, command_field, reinterpret_cast<uint8_t*>(&data));
+		}
+		if( i != motor->i_gain) {
+			field command_field;
+			motor->get_command(command::Position_I_Gain, command_field);
+			uint32_t data = static_cast<uint32_t>(i);
+			motor->i_gain_target = i;
+			add_syncwrite_data(motor->id, command_field, reinterpret_cast<uint8_t*>(&data));
+		}
+		if( d != motor->d_gain) {
+			field command_field;
+			motor->get_command(command::Position_D_Gain, command_field);
+			uint32_t data = static_cast<uint32_t>(d);
+			motor->d_gain_target = d;
+			add_syncwrite_data(motor->id, command_field, reinterpret_cast<uint8_t*>(&data));
+		}
 	}
 
 	/**
