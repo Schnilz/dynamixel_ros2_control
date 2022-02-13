@@ -7,16 +7,15 @@ are welcome too.
 Make sure the [DynamixelSDK](https://github.com/ROBOTIS-GIT/DynamixelSDK) for ROS2 is installed.
 Clone it in your workspace and checkout the branch ros2:
 ```
-git clone https://github.com/ROBOTIS-GIT/DynamixelSDK.git
+git clone https://github.com/ROBOTIS-GIT/DynamixelSDK.git -b ros2
 cd DynamixelSDK/
-git checkout ros2
 ```
 finally build with colcon
 `colcon build`
 
 ## Configure Dynamixel motor parameters via URDF
 
-Add the `serial_port`, `baud_rate`, and `id` parameters to the ros2_control part of your `.urdf` / `.xarco` files.
+Add the `serial_port`, `baud_rate`, and `id` parameters to the ros2_control part of your `.urdf` / `.xarco` files. 
 
 ```xml
 <ros2_control name="my_robot" type="system">
@@ -27,6 +26,7 @@ Add the `serial_port`, `baud_rate`, and `id` parameters to the ros2_control part
       </hardware>
       <joint name="joint1">
         <param name="id">10</param>
+        <!--param name="reboot_on_error">true</param-->
         <command_interface name="position"/>
         <!--command_interface name="velocity"/-->
         <state_interface name="position"/>
@@ -35,6 +35,8 @@ Add the `serial_port`, `baud_rate`, and `id` parameters to the ros2_control part
       </joint>
       ...
 ```
+When `reboot_on_error` is "true" the motor automaticaly reboots on mechanical overload error (it still loses torque for a brief moment, but that should be enogh to let the motor recover the fault).
+
 ## Run a test
 You need the urdf of the robot with the ros2_control xml added.
 After starting the control nodes and activating the Joint Trajectory Controller you can use ros2cli commands to test the actuators:

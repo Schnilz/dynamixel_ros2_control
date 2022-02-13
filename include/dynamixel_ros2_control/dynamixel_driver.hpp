@@ -41,6 +41,7 @@ class Driver {
 		const model_info* model;
 
 		bool led;
+		bool rebooting;
 		
 		double goal_position;
 
@@ -86,7 +87,7 @@ class Driver {
 		void set_velocity_from_raw(uint32_t raw) { velocity = velocity_from_raw(raw); }
 		void set_effort_from_raw(uint32_t raw) { effort = double(static_cast<int16_t>(raw))*0.1; }
 
-		Motor(const motor_id p_id, std::string p_name, const model_t type) : id(p_id), name(p_name), goal_position(std::nan("")), position(std::nan("")){
+		Motor(const motor_id p_id, std::string p_name, const model_t type) : id(p_id), name(p_name), rebooting(false), goal_position(std::nan("")), position(std::nan("")) {
 			try {
 				model = &model_infos.at(type);
 			} catch (const std::exception &e) {
@@ -173,7 +174,9 @@ class Driver {
 								error_callback(hardware_status::Overload_Error);
 							}
 							//https://emanual.robotis.com/docs/en/dxl/x/xl430-w250/#hardware-error-status
-						}	
+						} else {
+							this->rebooting = false;
+						}
 					});
 			}
 
@@ -272,6 +275,8 @@ class Driver {
 	 */
 	void set_torque(const dynamixel::Driver::Motor::Ptr& motor, bool torque) {
 		if(torque && motor->hw_error) {
+			if(motor->rebooting) 
+				return;
 			throw hardware_error(motor, "Can't enable torque!");
 		}
 		field command_field;
@@ -606,6 +611,7 @@ class Driver {
 		auto it_motor = motors.find(joint_name);
 		if (it_motor == motors.end())
 			throw std::invalid_argument("Joint \"" + joint_name + "\" not added to driver!");
+		it_motor->second->rebooting = true;
 		reboot(it_motor->second);
 	}
 };

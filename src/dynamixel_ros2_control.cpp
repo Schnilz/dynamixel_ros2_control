@@ -148,7 +148,7 @@ void DynamixelHardwareInterface::overload_error_callback(
     try {
       dynamixel_driver_->reboot(joint_name);
       RCLCPP_INFO(rclcpp::get_logger(DYN_LOGGER_NAME_STR),
-                  ("\"" + joint_name + " rebootet").c_str());
+                  ("\"" + joint_name + "\" rebooting").c_str());
       // succeeded = true;
     } catch (std::invalid_argument &e) {
       RCLCPP_WARN(rclcpp::get_logger(DYN_LOGGER_NAME_STR), "%s", e.what());
